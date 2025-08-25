@@ -1,4 +1,4 @@
-// File: pages/api/conversion.js - Updated for simple offers system
+// File: pages/api/conversion.js - Unknown offers bypass cache and fire directly
 import {
   initializeDatabase,
   addCachedConversion,
@@ -7,7 +7,7 @@ import {
   getOfferVertical,
   logConversion,
   logPostback,
-  getOrCreateSimpleOffer  // Updated function name
+  getSimpleOfferById
  } from '../../lib/database.js';
  
  // Function to validate RedTrack clickid format
@@ -91,28 +91,6 @@ import {
      connection.release();
    }
  }
-
- // Simple function to check if offer exists (no status check for simple system)
- async function offerExists(offer_id) {
-   const { getPool } = await import('../../lib/database.js');
-   const connection = await getPool().getConnection();
-   
-   try {
-     const [rows] = await connection.execute(`
-       SELECT offer_id FROM offers WHERE offer_id = ?
-     `, [offer_id]);
-     
-     return rows.length > 0;
-   } catch (error) {
-     // If offers table doesn't exist yet, just return true (backward compatibility)
-     if (error.code === 'ER_NO_SUCH_TABLE') {
-       return true;
-     }
-     throw error;
-   } finally {
-     connection.release();
-   }
- }
  
  export default async function handler(req, res) {
   try {
@@ -165,15 +143,65 @@ import {
       return res.status(200).send("0");
     }
 
-    // Ensure offer exists in database (will auto-create if needed for simple system)
-    try {
-      await getOrCreateSimpleOffer(offer_id);
-    } catch (error) {
-      // If offers table doesn't exist, just continue (backward compatibility)
-      if (error.code !== 'ER_NO_SUCH_TABLE') {
-        console.log('Note: Could not auto-create offer (offers table may not exist yet)');
+    // Check if offer exists in our system
+    const offerExists = await getSimpleOfferById(offer_id);
+    
+    if (!offerExists) {
+      // UNKNOWN OFFER: Fire postback directly without caching
+      await logConversion({
+        clickid,
+        offer_id,
+        original_amount: sumValue,
+        action: 'unknown_offer_direct_fire',
+        message: `Unknown offer ${offer_id} - firing postback directly without caching. Amount: $${sumValue.toFixed(2)}`
+      });
+
+      const redtrackUrl = `https://clks.trackthisclicks.com/postback?clickid=${encodeURIComponent(clickid)}&sum=${encodeURIComponent(sumValue)}&offer_id=${encodeURIComponent(offer_id)}`;
+      
+      let postbackSuccess = false;
+      let responseText = '';
+      let errorMessage = null;
+      
+      try {
+        const response = await fetch(redtrackUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        responseText = await response.text();
+        postbackSuccess = true;
+        
+        await logConversion({
+          clickid,
+          offer_id,
+          original_amount: sumValue,
+          total_sent: sumValue,
+          action: 'unknown_offer_postback_success',
+          message: `Direct postback successful for unknown offer ${offer_id}. Amount: $${sumValue.toFixed(2)}, Response: ${responseText}`
+        });
+        
+      } catch (error) {
+        errorMessage = error.message;
+        
+        await logConversion({
+          clickid,
+          offer_id,
+          original_amount: sumValue,
+          total_sent: sumValue,
+          action: 'unknown_offer_postback_failed',
+          message: `Direct postback failed for unknown offer ${offer_id}. Amount: $${sumValue.toFixed(2)}, Error: ${error.message}`
+        });
+      }
+      
+      await logPostback(clickid, offer_id, sumValue, redtrackUrl, postbackSuccess, responseText, errorMessage);
+      
+      if (postbackSuccess) {
+        return res.status(200).send("2"); // Success
+      } else {
+        return res.status(200).send("3"); // Postback failed
       }
     }
+
+    // KNOWN OFFER: Process normally with caching system
     
     // Get payout threshold for this offer's vertical (defaults to 10.00 if no vertical assigned)
     const payoutThreshold = await getVerticalPayoutThreshold(offer_id);
@@ -190,8 +218,8 @@ import {
       offer_id,
       original_amount: sumValue,
       cached_amount: verticalCachedTotal,
-      action: 'cache_loaded',
-      message: `Vertical "${verticalName}" cached total: $${verticalCachedTotal.toFixed(2)}, New conversion: $${sumValue.toFixed(2)}, Payout threshold: $${payoutThreshold.toFixed(2)}`
+      action: 'known_offer_cache_loaded',
+      message: `Known offer: ${offerExists.offer_name || offer_id}. Vertical "${verticalName}" cached total: $${verticalCachedTotal.toFixed(2)}, New conversion: $${sumValue.toFixed(2)}, Payout threshold: $${payoutThreshold.toFixed(2)}`
     });
     
     if (sumValue < payoutThreshold) {
@@ -204,10 +232,10 @@ import {
         original_amount: sumValue,
         cached_amount: newVerticalCachedTotal,
         action: 'cached_conversion',
-        message: `Cached sub-$${payoutThreshold.toFixed(2)} conversion ($${sumValue.toFixed(2)}) for offer ${offer_id}. New vertical "${verticalName}" total cached: $${newVerticalCachedTotal.toFixed(2)}`
+        message: `Cached sub-$${payoutThreshold.toFixed(2)} conversion ($${sumValue.toFixed(2)}) for offer ${offer_id} (${offerExists.offer_name || 'No name'}). New vertical "${verticalName}" total cached: $${newVerticalCachedTotal.toFixed(2)}`
       });
       
-      return res.status(200).send("1");
+      return res.status(200).send("1"); // Cached
     }
     
     // When threshold is reached, sum ALL cached conversions from the same vertical
@@ -224,7 +252,7 @@ import {
       cached_amount: verticalCachedTotal,
       total_sent: totalToSend,
       action: 'preparing_postback',
-      message: `Preparing to send postback to RedTrack for vertical "${verticalName}". Total: $${totalToSend.toFixed(2)} (Current conversion: $${sumValue.toFixed(2)} + Vertical cache: $${verticalCachedTotal.toFixed(2)}) - Triggered by $${payoutThreshold.toFixed(2)} threshold. Offers in vertical: ${offersInVertical.join(', ')}`
+      message: `Preparing to send postback to RedTrack for offer ${offer_id} (${offerExists.offer_name || 'No name'}) in vertical "${verticalName}". Total: $${totalToSend.toFixed(2)} (Current conversion: $${sumValue.toFixed(2)} + Vertical cache: $${verticalCachedTotal.toFixed(2)}) - Triggered by $${payoutThreshold.toFixed(2)} threshold. Offers in vertical: ${offersInVertical.join(', ')}`
     });
     
     if (verticalCachedTotal > 0) {
@@ -260,7 +288,7 @@ import {
         cached_amount: verticalCachedTotal,
         total_sent: totalToSend,
         action: 'postback_success',
-        message: `Postback successful for vertical "${verticalName}". Response: ${responseText}`
+        message: `Postback successful for offer ${offer_id} (${offerExists.offer_name || 'No name'}) in vertical "${verticalName}". Response: ${responseText}`
       });
       
     } catch (error) {
@@ -273,16 +301,16 @@ import {
         cached_amount: verticalCachedTotal,
         total_sent: totalToSend,
         action: 'postback_failed',
-        message: `Error sending postback for vertical "${verticalName}": ${error.message}`
+        message: `Error sending postback for offer ${offer_id} (${offerExists.offer_name || 'No name'}) in vertical "${verticalName}": ${error.message}`
       });
     }
     
     await logPostback(clickid, offer_id, totalToSend, redtrackUrl, postbackSuccess, responseText, errorMessage);
     
     if (postbackSuccess) {
-      return res.status(200).send("2");
+      return res.status(200).send("2"); // Success
     } else {
-      return res.status(200).send("3");
+      return res.status(200).send("3"); // Postback failed
     }
     
   } catch (error) {
@@ -299,6 +327,6 @@ import {
       console.error('Failed to log error:', logError);
     }
     
-    return res.status(200).send("4");
+    return res.status(200).send("4"); // System error
   }
  }
