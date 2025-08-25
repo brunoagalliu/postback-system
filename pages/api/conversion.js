@@ -2,8 +2,8 @@ import {
   initializeDatabase,
   addCachedConversion,
   getCachedTotalByOffer,
-  removeCachedConversionsByOffer,
   getVerticalPayoutThreshold,
+  getOfferVertical,
   logConversion,
   logPostback
  } from '../../lib/database.js';
@@ -30,6 +30,64 @@ import {
    // Allow letters, numbers, hyphens, and underscores
    const offerIdRegex = /^[a-zA-Z0-9_-]{1,50}$/;
    return offerIdRegex.test(offer_id);
+ }
+ 
+ // Function to get all cached amount for offers in the same vertical
+ async function getCachedTotalByVertical(offer_id) {
+   const { getPool } = await import('../../lib/database.js');
+   const connection = await getPool().getConnection();
+   
+   try {
+     const [rows] = await connection.execute(`
+       SELECT COALESCE(SUM(cc.amount), 0) as total
+       FROM cached_conversions cc
+       JOIN offer_verticals ov1 ON cc.offer_id = ov1.offer_id
+       JOIN offer_verticals ov2 ON ov1.vertical_id = ov2.vertical_id
+       WHERE ov2.offer_id = ?
+     `, [offer_id]);
+     
+     return parseFloat(rows[0].total);
+   } finally {
+     connection.release();
+   }
+ }
+ 
+ // Function to clear cache for all offers in the same vertical
+ async function clearCacheByVertical(offer_id) {
+   const { getPool } = await import('../../lib/database.js');
+   const connection = await getPool().getConnection();
+   
+   try {
+     const [result] = await connection.execute(`
+       DELETE cc FROM cached_conversions cc
+       JOIN offer_verticals ov1 ON cc.offer_id = ov1.offer_id
+       JOIN offer_verticals ov2 ON ov1.vertical_id = ov2.vertical_id
+       WHERE ov2.offer_id = ?
+     `, [offer_id]);
+     
+     return result.affectedRows;
+   } finally {
+     connection.release();
+   }
+ }
+ 
+ // Function to get all offers in the same vertical
+ async function getOffersInSameVertical(offer_id) {
+   const { getPool } = await import('../../lib/database.js');
+   const connection = await getPool().getConnection();
+   
+   try {
+     const [rows] = await connection.execute(`
+       SELECT DISTINCT ov1.offer_id
+       FROM offer_verticals ov1
+       JOIN offer_verticals ov2 ON ov1.vertical_id = ov2.vertical_id
+       WHERE ov2.offer_id = ?
+     `, [offer_id]);
+     
+     return rows.map(row => row.offer_id);
+   } finally {
+     connection.release();
+   }
  }
  
  export default async function handler(req, res) {
@@ -83,61 +141,69 @@ import {
       return res.status(200).send("0");
     }
     
-    // Get cached total for this specific offer
-    const cachedTotal = await getCachedTotalByOffer(offer_id);
-    
     // Get payout threshold for this offer's vertical (defaults to 10.00 if no vertical assigned)
     const payoutThreshold = await getVerticalPayoutThreshold(offer_id);
+    
+    // Get vertical info for logging
+    const verticalInfo = await getOfferVertical(offer_id);
+    const verticalName = verticalInfo ? verticalInfo.name : 'Unassigned';
+    
+    // Get cached total for ALL offers in the same vertical
+    const verticalCachedTotal = await getCachedTotalByVertical(offer_id);
     
     await logConversion({
       clickid,
       offer_id,
       original_amount: sumValue,
-      cached_amount: cachedTotal,
+      cached_amount: verticalCachedTotal,
       action: 'cache_loaded',
-      message: `Offer ${offer_id} cached total: $${cachedTotal.toFixed(2)}, New conversion: $${sumValue.toFixed(2)}, Payout threshold: $${payoutThreshold.toFixed(2)}`
+      message: `Vertical "${verticalName}" cached total: $${verticalCachedTotal.toFixed(2)}, New conversion: $${sumValue.toFixed(2)}, Payout threshold: $${payoutThreshold.toFixed(2)}`
     });
     
     if (sumValue < payoutThreshold) {
       await addCachedConversion(clickid, offer_id, sumValue);
-      const newCachedTotal = await getCachedTotalByOffer(offer_id);
+      const newVerticalCachedTotal = await getCachedTotalByVertical(offer_id);
       
       await logConversion({
         clickid,
         offer_id,
         original_amount: sumValue,
-        cached_amount: newCachedTotal,
+        cached_amount: newVerticalCachedTotal,
         action: 'cached_conversion',
-        message: `Cached sub-$${payoutThreshold.toFixed(2)} conversion ($${sumValue.toFixed(2)}) for offer ${offer_id}. New offer total cached: $${newCachedTotal.toFixed(2)}`
+        message: `Cached sub-$${payoutThreshold.toFixed(2)} conversion ($${sumValue.toFixed(2)}) for offer ${offer_id}. New vertical "${verticalName}" total cached: $${newVerticalCachedTotal.toFixed(2)}`
       });
       
       return res.status(200).send("1");
     }
     
-    const totalToSend = sumValue + cachedTotal;
+    // When threshold is reached, sum ALL cached conversions from the same vertical
+    const totalToSend = sumValue + verticalCachedTotal;
     const redtrackUrl = `https://clks.trackthisclicks.com/postback?clickid=${encodeURIComponent(clickid)}&sum=${encodeURIComponent(totalToSend)}&offer_id=${encodeURIComponent(offer_id)}`;
+    
+    // Get list of all offers in the same vertical for logging
+    const offersInVertical = await getOffersInSameVertical(offer_id);
     
     await logConversion({
       clickid,
       offer_id,
       original_amount: sumValue,
-      cached_amount: cachedTotal,
+      cached_amount: verticalCachedTotal,
       total_sent: totalToSend,
       action: 'preparing_postback',
-      message: `Preparing to send postback to RedTrack for offer ${offer_id}. Total: $${totalToSend.toFixed(2)} (Current conversion: $${sumValue.toFixed(2)} + Offer cache: $${cachedTotal.toFixed(2)}) - Triggered by $${payoutThreshold.toFixed(2)} threshold`
+      message: `Preparing to send postback to RedTrack for vertical "${verticalName}". Total: $${totalToSend.toFixed(2)} (Current conversion: $${sumValue.toFixed(2)} + Vertical cache: $${verticalCachedTotal.toFixed(2)}) - Triggered by $${payoutThreshold.toFixed(2)} threshold. Offers in vertical: ${offersInVertical.join(', ')}`
     });
     
-    if (cachedTotal > 0) {
-      const removedRows = await removeCachedConversionsByOffer(offer_id);
+    if (verticalCachedTotal > 0) {
+      const clearedRows = await clearCacheByVertical(offer_id);
       
       await logConversion({
         clickid,
         offer_id,
         original_amount: sumValue,
-        cached_amount: cachedTotal,
+        cached_amount: verticalCachedTotal,
         total_sent: totalToSend,
-        action: 'offer_cache_used',
-        message: `Used and removed ${removedRows} cached entries for offer ${offer_id}. Total sent: $${totalToSend.toFixed(2)}`
+        action: 'vertical_cache_cleared',
+        message: `Vertical "${verticalName}" cache cleared before postback. Removed ${clearedRows} cached entries from ALL offers in vertical (${offersInVertical.join(', ')}). Total sent: $${totalToSend.toFixed(2)}`
       });
     }
     
@@ -157,10 +223,10 @@ import {
         clickid,
         offer_id,
         original_amount: sumValue,
-        cached_amount: cachedTotal,
+        cached_amount: verticalCachedTotal,
         total_sent: totalToSend,
         action: 'postback_success',
-        message: `Postback successful for offer ${offer_id}. Response: ${responseText}`
+        message: `Postback successful for vertical "${verticalName}". Response: ${responseText}`
       });
       
     } catch (error) {
@@ -170,10 +236,10 @@ import {
         clickid,
         offer_id,
         original_amount: sumValue,
-        cached_amount: cachedTotal,
+        cached_amount: verticalCachedTotal,
         total_sent: totalToSend,
         action: 'postback_failed',
-        message: `Error sending postback for offer ${offer_id}: ${error.message}`
+        message: `Error sending postback for vertical "${verticalName}": ${error.message}`
       });
     }
     

@@ -1,17 +1,48 @@
 {
-  "name": "conversion-api",
-  "version": "1.0.0",
+  "name": "conversion-tracker",
+  "version": "2.1.0",
+  "description": "Affiliate marketing conversion tracking system with vertical categorization and MySQL storage",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint",
+    "deploy": "vercel",
+    "db:check": "curl $VERCEL_URL/api/admin/check-database || curl http://localhost:3000/api/admin/check-database"
   },
   "dependencies": {
-    "mysql2": "^3.14.3",
-    "next": "^15.5.0",
+    "mysql2": "^3.6.5",
+    "next": "14.0.4",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "vercel": "^25.2.0"
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.55.0",
+    "eslint-config-next": "14.0.4"
+  },
+  "keywords": [
+    "affiliate-marketing",
+    "conversion-tracking",
+    "redtrack",
+    "postback",
+    "mysql",
+    "nextjs",
+    "admin-dashboard",
+    "verticals",
+    "offer-management"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brunoagalliu/conversion-tracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/brunoagalliu/conversion-tracker/issues"
+  },
+  "homepage": "https://pb.trackthisclicks.com",
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
