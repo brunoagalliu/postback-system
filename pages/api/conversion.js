@@ -1,3 +1,4 @@
+// File: pages/api/conversion.js - Updated for simple offers system
 import {
   initializeDatabase,
   addCachedConversion,
@@ -5,7 +6,8 @@ import {
   getVerticalPayoutThreshold,
   getOfferVertical,
   logConversion,
-  logPostback
+  logPostback,
+  getOrCreateSimpleOffer  // Updated function name
  } from '../../lib/database.js';
  
  // Function to validate RedTrack clickid format
@@ -89,6 +91,28 @@ import {
      connection.release();
    }
  }
+
+ // Simple function to check if offer exists (no status check for simple system)
+ async function offerExists(offer_id) {
+   const { getPool } = await import('../../lib/database.js');
+   const connection = await getPool().getConnection();
+   
+   try {
+     const [rows] = await connection.execute(`
+       SELECT offer_id FROM offers WHERE offer_id = ?
+     `, [offer_id]);
+     
+     return rows.length > 0;
+   } catch (error) {
+     // If offers table doesn't exist yet, just return true (backward compatibility)
+     if (error.code === 'ER_NO_SUCH_TABLE') {
+       return true;
+     }
+     throw error;
+   } finally {
+     connection.release();
+   }
+ }
  
  export default async function handler(req, res) {
   try {
@@ -139,6 +163,16 @@ import {
         message: `Invalid sum value rejected: clickid=${clickid}, offer_id=${offer_id}, sum=${sum}`
       });
       return res.status(200).send("0");
+    }
+
+    // Ensure offer exists in database (will auto-create if needed for simple system)
+    try {
+      await getOrCreateSimpleOffer(offer_id);
+    } catch (error) {
+      // If offers table doesn't exist, just continue (backward compatibility)
+      if (error.code !== 'ER_NO_SUCH_TABLE') {
+        console.log('Note: Could not auto-create offer (offers table may not exist yet)');
+      }
     }
     
     // Get payout threshold for this offer's vertical (defaults to 10.00 if no vertical assigned)

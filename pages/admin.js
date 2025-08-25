@@ -170,9 +170,11 @@ export default function AdminDashboard() {
                 <meta name="description" content="Conversion tracking admin dashboard with vertical and offer support" />
             </Head>
 
+ 
+
             <header style={{ marginBottom: '30px' }}>
                 <h1>Conversion Tracking Admin Dashboard</h1>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <button 
                         onClick={fetchStats}
                         disabled={loading}
@@ -203,6 +205,26 @@ export default function AdminDashboard() {
                     >
                         Create Vertical
                     </button>
+                    <a href="/offers" style={{ 
+                        padding: '8px 16px',
+                        background: '#17a2b8',
+                        color: 'white',
+                        textDecoration: 'none',
+                        borderRadius: '4px',
+                        display: 'inline-block'
+                    }}>
+                        Manage Offers
+                    </a>
+                    <a href="/logs" style={{ 
+                        padding: '8px 16px',
+                        background: '#6c757d',
+                        color: 'white',
+                        textDecoration: 'none',
+                        borderRadius: '4px',
+                        display: 'inline-block'
+                    }}>
+                        View Logs
+                    </a>
                 </div>
             </header>
 
