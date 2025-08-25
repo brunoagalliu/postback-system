@@ -2,7 +2,8 @@ import {
   initializeDatabase,
   addCachedConversion,
   getCachedTotalByOffer,
-  clearCachedConversionsByOffer,
+  removeCachedConversionsByOffer,
+  getVerticalPayoutThreshold,
   logConversion,
   logPostback
  } from '../../lib/database.js';
@@ -85,16 +86,19 @@ import {
     // Get cached total for this specific offer
     const cachedTotal = await getCachedTotalByOffer(offer_id);
     
+    // Get payout threshold for this offer's vertical (defaults to 10.00 if no vertical assigned)
+    const payoutThreshold = await getVerticalPayoutThreshold(offer_id);
+    
     await logConversion({
       clickid,
       offer_id,
       original_amount: sumValue,
       cached_amount: cachedTotal,
       action: 'cache_loaded',
-      message: `Offer ${offer_id} cached total: $${cachedTotal.toFixed(2)}, New conversion: $${sumValue.toFixed(2)}`
+      message: `Offer ${offer_id} cached total: $${cachedTotal.toFixed(2)}, New conversion: $${sumValue.toFixed(2)}, Payout threshold: $${payoutThreshold.toFixed(2)}`
     });
     
-    if (sumValue < 10) {
+    if (sumValue < payoutThreshold) {
       await addCachedConversion(clickid, offer_id, sumValue);
       const newCachedTotal = await getCachedTotalByOffer(offer_id);
       
@@ -104,7 +108,7 @@ import {
         original_amount: sumValue,
         cached_amount: newCachedTotal,
         action: 'cached_conversion',
-        message: `Cached sub-$10 conversion ($${sumValue.toFixed(2)}) for offer ${offer_id}. New offer total cached: $${newCachedTotal.toFixed(2)}`
+        message: `Cached sub-$${payoutThreshold.toFixed(2)} conversion ($${sumValue.toFixed(2)}) for offer ${offer_id}. New offer total cached: $${newCachedTotal.toFixed(2)}`
       });
       
       return res.status(200).send("1");
@@ -120,11 +124,11 @@ import {
       cached_amount: cachedTotal,
       total_sent: totalToSend,
       action: 'preparing_postback',
-      message: `Preparing to send postback to RedTrack for offer ${offer_id}. Total: $${totalToSend.toFixed(2)} (Current conversion: $${sumValue.toFixed(2)} + Offer cache: $${cachedTotal.toFixed(2)})`
+      message: `Preparing to send postback to RedTrack for offer ${offer_id}. Total: $${totalToSend.toFixed(2)} (Current conversion: $${sumValue.toFixed(2)} + Offer cache: $${cachedTotal.toFixed(2)}) - Triggered by $${payoutThreshold.toFixed(2)} threshold`
     });
     
     if (cachedTotal > 0) {
-      const clearedRows = await clearCachedConversionsByOffer(offer_id);
+      const removedRows = await removeCachedConversionsByOffer(offer_id);
       
       await logConversion({
         clickid,
@@ -132,8 +136,8 @@ import {
         original_amount: sumValue,
         cached_amount: cachedTotal,
         total_sent: totalToSend,
-        action: 'offer_cache_cleared',
-        message: `Offer ${offer_id} cache cleared before postback. Removed ${clearedRows} cached entries. Total to send: $${totalToSend.toFixed(2)}`
+        action: 'offer_cache_used',
+        message: `Used and removed ${removedRows} cached entries for offer ${offer_id}. Total sent: $${totalToSend.toFixed(2)}`
       });
     }
     
