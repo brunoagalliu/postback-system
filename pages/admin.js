@@ -322,7 +322,7 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
-                    {/* Vertical Statistics */}
+                    {/* Vertical Statistics - Updated with View Details links */}
                     {verticals && verticals.length > 0 && (
                         <div style={{ marginBottom: '30px' }}>
                             <h3>Vertical Performance</h3>
@@ -366,28 +366,46 @@ export default function AdminDashboard() {
                                                     border: '1px solid #dee2e6', 
                                                     textAlign: 'right',
                                                     color: vertical.success_rate >= 90 ? '#28a745' : 
-                                                           vertical.success_rate >= 70 ? '#fd7e14' : '#dc3545'
+                                                        vertical.success_rate >= 70 ? '#fd7e14' : '#dc3545'
                                                 }}>
                                                     {vertical.success_rate.toFixed(1)}%
                                                 </td>
                                                 <td style={{ padding: '12px', border: '1px solid #dee2e6', textAlign: 'center' }}>
-                                                    <button 
-                                                        onClick={() => {
-                                                            setEditingVertical(vertical);
-                                                            setShowVerticalModal(true);
-                                                        }}
-                                                        style={{
-                                                            padding: '4px 8px',
-                                                            background: '#0070f3',
-                                                            color: 'white',
-                                                            border: 'none',
-                                                            borderRadius: '3px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '12px'
-                                                        }}
-                                                    >
-                                                        Edit
-                                                    </button>
+                                                    <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                                        <button 
+                                                            onClick={() => {
+                                                                setEditingVertical(vertical);
+                                                                setShowVerticalModal(true);
+                                                            }}
+                                                            style={{
+                                                                padding: '4px 8px',
+                                                                background: '#0070f3',
+                                                                color: 'white',
+                                                                border: 'none',
+                                                                borderRadius: '3px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px'
+                                                            }}
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                        <a 
+                                                            href={`/vertical/${vertical.id}`}
+                                                            style={{
+                                                                padding: '4px 8px',
+                                                                background: '#28a745',
+                                                                color: 'white',
+                                                                border: 'none',
+                                                                borderRadius: '3px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px',
+                                                                textDecoration: 'none',
+                                                                display: 'inline-block'
+                                                            }}
+                                                        >
+                                                            View Details
+                                                        </a>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}

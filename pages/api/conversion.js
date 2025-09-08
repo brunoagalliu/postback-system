@@ -1,4 +1,4 @@
-// File: pages/api/conversion.js - Unknown offers bypass cache and fire directly
+// File: pages/api/conversion.js
 import {
   initializeDatabase,
   addCachedConversion,
@@ -7,7 +7,10 @@ import {
   getOfferVertical,
   logConversion,
   logPostback,
-  getSimpleOfferById
+  getSimpleOfferById,
+  shouldFlushCache,
+  alreadyFlushedToday,
+  flushAllVerticalCaches
  } from '../../lib/database.js';
  
  // Function to validate RedTrack clickid format
@@ -96,6 +99,39 @@ import {
   try {
     await initializeDatabase();
     
+    // AUTO-FLUSH CHECK - Check if it's time to flush cache
+    if (shouldFlushCache()) {
+      const alreadyFlushed = await alreadyFlushedToday();
+      
+      if (!alreadyFlushed) {
+        try {
+          await logConversion({
+            clickid: 'auto-flush',
+            action: 'auto_flush_triggered',
+            message: 'Auto-flush triggered during conversion processing (11:55-11:59 PM NY time)'
+          });
+          
+          await flushAllVerticalCaches();
+          
+          await logConversion({
+            clickid: 'auto-flush',
+            action: 'auto_flush_success',
+            message: 'Auto-flush completed successfully during conversion processing'
+          });
+          
+        } catch (flushError) {
+          console.error('Auto-flush error:', flushError);
+          
+          await logConversion({
+            clickid: 'auto-flush',
+            action: 'auto_flush_error',
+            message: `Auto-flush failed during conversion processing: ${flushError.message}`
+          });
+        }
+      }
+    }
+    
+    // CONTINUE WITH NORMAL CONVERSION PROCESSING
     const { clickid, sum, offer_id } = req.query;
     const sumValue = parseFloat(sum || 0);
     
@@ -195,9 +231,9 @@ import {
       await logPostback(clickid, offer_id, sumValue, redtrackUrl, postbackSuccess, responseText, errorMessage);
       
       if (postbackSuccess) {
-        return res.status(200).send("2"); // Success
+        return res.status(200).send("2");
       } else {
-        return res.status(200).send("3"); // Postback failed
+        return res.status(200).send("3");
       }
     }
 
@@ -235,7 +271,7 @@ import {
         message: `Cached sub-$${payoutThreshold.toFixed(2)} conversion ($${sumValue.toFixed(2)}) for offer ${offer_id} (${offerExists.offer_name || 'No name'}). New vertical "${verticalName}" total cached: $${newVerticalCachedTotal.toFixed(2)}`
       });
       
-      return res.status(200).send("1"); // Cached
+      return res.status(200).send("1");
     }
     
     // When threshold is reached, sum ALL cached conversions from the same vertical
@@ -308,9 +344,9 @@ import {
     await logPostback(clickid, offer_id, totalToSend, redtrackUrl, postbackSuccess, responseText, errorMessage);
     
     if (postbackSuccess) {
-      return res.status(200).send("2"); // Success
+      return res.status(200).send("2");
     } else {
-      return res.status(200).send("3"); // Postback failed
+      return res.status(200).send("3");
     }
     
   } catch (error) {
@@ -327,6 +363,6 @@ import {
       console.error('Failed to log error:', logError);
     }
     
-    return res.status(200).send("4"); // System error
+    return res.status(200).send("4");
   }
  }
