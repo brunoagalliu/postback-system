@@ -1,4 +1,4 @@
-// File: pages/api/conversion.js
+// File: pages/api/conversion.js - Clean version without auto-flush
 import {
   initializeDatabase,
   addCachedConversion,
@@ -7,10 +7,7 @@ import {
   getOfferVertical,
   logConversion,
   logPostback,
-  getSimpleOfferById,
-  shouldFlushCache,
-  alreadyFlushedToday,
-  flushAllVerticalCaches
+  getSimpleOfferById
  } from '../../lib/database.js';
  
  // Function to validate RedTrack clickid format
@@ -99,39 +96,6 @@ import {
   try {
     await initializeDatabase();
     
-    // AUTO-FLUSH CHECK - Check if it's time to flush cache
-    if (shouldFlushCache()) {
-      const alreadyFlushed = await alreadyFlushedToday();
-      
-      if (!alreadyFlushed) {
-        try {
-          await logConversion({
-            clickid: 'auto-flush',
-            action: 'auto_flush_triggered',
-            message: 'Auto-flush triggered during conversion processing (11:55-11:59 PM NY time)'
-          });
-          
-          await flushAllVerticalCaches();
-          
-          await logConversion({
-            clickid: 'auto-flush',
-            action: 'auto_flush_success',
-            message: 'Auto-flush completed successfully during conversion processing'
-          });
-          
-        } catch (flushError) {
-          console.error('Auto-flush error:', flushError);
-          
-          await logConversion({
-            clickid: 'auto-flush',
-            action: 'auto_flush_error',
-            message: `Auto-flush failed during conversion processing: ${flushError.message}`
-          });
-        }
-      }
-    }
-    
-    // CONTINUE WITH NORMAL CONVERSION PROCESSING
     const { clickid, sum, offer_id } = req.query;
     const sumValue = parseFloat(sum || 0);
     
