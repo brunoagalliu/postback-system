@@ -16,6 +16,10 @@ export default function AdminDashboard() {
     const [editingVertical, setEditingVertical] = useState(null);
     const [assigningOffer, setAssigningOffer] = useState(null);
 
+    // Flush states
+    const [flushLoading, setFlushLoading] = useState(false);
+    const [flushingVertical, setFlushingVertical] = useState(null);
+
     const fetchStats = async () => {
         try {
             setLoading(true);
@@ -141,6 +145,72 @@ export default function AdminDashboard() {
         }
     };
 
+    const handleManualFlush = async () => {
+        if (!confirm('Are you sure you want to flush all cached conversions? This will fire postbacks for all verticals with cached amounts.')) {
+            return;
+        }
+
+        try {
+            setFlushLoading(true);
+            
+            const response = await fetch('/api/admin/manual-flush', {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                alert(`Manual flush completed!\n\n${result.message}\n\nFlushed verticals: ${result.flushed_verticals}\nEastern Time: ${result.eastern_time}`);
+                
+                // Refresh stats to show updated cache amounts
+                fetchStats();
+                fetchVerticals();
+            } else {
+                alert('Manual flush failed: ' + result.error);
+            }
+        } catch (error) {
+            alert('Error during manual flush: ' + error.message);
+        } finally {
+            setFlushLoading(false);
+        }
+    };
+
+    const handleVerticalFlush = async (vertical) => {
+        if (!confirm(`Are you sure you want to flush cached conversions for vertical "${vertical.name}"?\n\nCached amount: $${vertical.total_cached_amount.toFixed(2)}\nThis will fire a postback to RedTrack.`)) {
+            return;
+        }
+
+        try {
+            setFlushingVertical(vertical.id);
+            
+            const response = await fetch('/api/admin/flush-vertical', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vertical_id: vertical.id })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                if (result.result.action === 'no_cache') {
+                    alert(`No cache to flush for "${vertical.name}"`);
+                } else {
+                    alert(`Vertical "${vertical.name}" flushed successfully!\n\n${result.result.message}\nPostback: ${result.result.postback_success ? 'Success' : 'Failed'}\nEastern Time: ${result.eastern_time}`);
+                }
+                
+                // Refresh stats to show updated cache amounts
+                fetchStats();
+                fetchVerticals();
+            } else {
+                alert(`Flush failed for "${vertical.name}": ` + result.error);
+            }
+        } catch (error) {
+            alert(`Error flushing "${vertical.name}": ` + error.message);
+        } finally {
+            setFlushingVertical(null);
+        }
+    };
+
     useEffect(() => {
         fetchStats();
         fetchVerticals();
@@ -169,8 +239,6 @@ export default function AdminDashboard() {
                 <title>Admin Dashboard - Vertical & Offer Tracking</title>
                 <meta name="description" content="Conversion tracking admin dashboard with vertical and offer support" />
             </Head>
-
- 
 
             <header style={{ marginBottom: '30px' }}>
                 <h1>Conversion Tracking Admin Dashboard</h1>
@@ -204,6 +272,20 @@ export default function AdminDashboard() {
                         }}
                     >
                         Create Vertical
+                    </button>
+                    <button 
+                        onClick={handleManualFlush}
+                        disabled={flushLoading}
+                        style={{
+                            padding: '8px 16px',
+                            background: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: flushLoading ? 'default' : 'pointer'
+                        }}
+                    >
+                        {flushLoading ? 'Flushing All...' : 'Flush All Cache'}
                     </button>
                     <a href="/offers" style={{ 
                         padding: '8px 16px',
@@ -322,7 +404,7 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
-                    {/* Vertical Statistics - Updated with View Details links */}
+                    {/* Vertical Statistics */}
                     {verticals && verticals.length > 0 && (
                         <div style={{ marginBottom: '30px' }}>
                             <h3>Vertical Performance</h3>
@@ -356,7 +438,12 @@ export default function AdminDashboard() {
                                                     {vertical.total_offers}
                                                 </td>
                                                 <td style={{ padding: '12px', border: '1px solid #dee2e6', textAlign: 'right' }}>
-                                                    ${vertical.total_cached_amount.toFixed(2)}
+                                                    <span style={{ 
+                                                        fontWeight: 'bold',
+                                                        color: vertical.total_cached_amount > 0 ? '#dc3545' : '#666'
+                                                    }}>
+                                                        ${vertical.total_cached_amount.toFixed(2)}
+                                                    </span>
                                                 </td>
                                                 <td style={{ padding: '12px', border: '1px solid #dee2e6', textAlign: 'right' }}>
                                                     {vertical.total_postbacks}
@@ -366,12 +453,12 @@ export default function AdminDashboard() {
                                                     border: '1px solid #dee2e6', 
                                                     textAlign: 'right',
                                                     color: vertical.success_rate >= 90 ? '#28a745' : 
-                                                        vertical.success_rate >= 70 ? '#fd7e14' : '#dc3545'
+                                                           vertical.success_rate >= 70 ? '#fd7e14' : '#dc3545'
                                                 }}>
                                                     {vertical.success_rate.toFixed(1)}%
                                                 </td>
                                                 <td style={{ padding: '12px', border: '1px solid #dee2e6', textAlign: 'center' }}>
-                                                    <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                                    <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', flexWrap: 'wrap' }}>
                                                         <button 
                                                             onClick={() => {
                                                                 setEditingVertical(vertical);
@@ -405,6 +492,23 @@ export default function AdminDashboard() {
                                                         >
                                                             View Details
                                                         </a>
+                                                        <button 
+                                                            onClick={() => handleVerticalFlush(vertical)}
+                                                            disabled={flushingVertical === vertical.id || vertical.total_cached_amount === 0}
+                                                            style={{
+                                                                padding: '4px 8px',
+                                                                background: vertical.total_cached_amount > 0 ? '#dc3545' : '#6c757d',
+                                                                color: 'white',
+                                                                border: 'none',
+                                                                borderRadius: '3px',
+                                                                cursor: (flushingVertical === vertical.id || vertical.total_cached_amount === 0) ? 'default' : 'pointer',
+                                                                fontSize: '12px',
+                                                                opacity: vertical.total_cached_amount === 0 ? 0.5 : 1
+                                                            }}
+                                                        >
+                                                            {flushingVertical === vertical.id ? 'Flushing...' : 
+                                                             vertical.total_cached_amount > 0 ? 'Flush' : 'No Cache'}
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -527,7 +631,7 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
-                    {/* Rest of the tables with filtered data would continue here... */}
+                    {/* Rest of the content would continue here... */}
                     
                 </div>
             )}
@@ -731,19 +835,6 @@ export default function AdminDashboard() {
                 </div>
             )}
 
-            <div style={{ marginTop: '40px', textAlign: 'center' }}>
-                <a href="/logs" style={{ 
-                    padding: '10px 20px',
-                    background: '#6c757d',
-                    color: 'white',
-                    textDecoration: 'none',
-                    borderRadius: '4px',
-                    marginRight: '10px'
-                }}>
-                    View Detailed Logs
-                </a>
-            </div>
-
             <footer style={{ marginTop: '30px', padding: '20px', background: '#f8f9fa', borderRadius: '8px' }}>
                 <h4>How the Vertical System Works:</h4>
                 <ul style={{ marginLeft: '20px', color: '#666' }}>
@@ -752,6 +843,7 @@ export default function AdminDashboard() {
                     <li><strong>Offer Assignment:</strong> Assign offers to verticals to inherit the vertical's payout threshold</li>
                     <li><strong>Per-Vertical Caching:</strong> Conversions under the threshold are cached per offer within each vertical</li>
                     <li><strong>Automatic Processing:</strong> When threshold is reached, cached amounts are automatically used and postback sent</li>
+                    <li><strong>Manual Flushing:</strong> Use individual flush buttons to clear cache for specific verticals anytime</li>
                     <li><strong>Isolated Tracking:</strong> Each vertical operates independently with its own rules and metrics</li>
                 </ul>
             </footer>
